@@ -118,9 +118,19 @@ filter_complex = (
     # Agregar niebla semitransparente (blanca difusa)
     f"[4:v]fps=15,noise=alls=10:allf=t,format=rgba,colorchannelmixer=aa=0.07,gblur=sigma=6[mist];"
     f"[with_sway][mist]overlay=shortest=1:format=auto[with_mist];"
-    
+
+    # Hojas cayendo (2 capas) - se usan como overlays para más dinamismo
+    f"[5:v]fps=24,format=rgba,colorchannelmixer=aa=0.30,gblur=sigma=1[leaves1];"
+    f"[6:v]fps=20,format=rgba,colorchannelmixer=aa=0.20,gblur=sigma=1.2[leaves2];"
+    f"[with_mist][leaves1]overlay=shortest=1:format=auto[with_leaves1];"
+    f"[with_leaves1][leaves2]overlay=shortest=1:format=auto[with_leaves];"
+
+    # Zoom / panorámica sutil (capa levemente desplazada y transparente)
+    f"[0:v]scale=1310:737,format=rgba,colorchannelmixer=aa=0.04[zoom];"
+    f"[with_leaves][zoom]overlay=x='sin(2*PI*t/40)*8':y='cos(2*PI*t/60)*4':shortest=1:format=auto[with_zoom];"
+
     # Agregar mensajes de texto y convertir a yuv420p
-    f"[with_mist]{text_filter_chain},format=yuv420p[final]"
+    f"[with_zoom]{text_filter_chain},format=yuv420p[final]"
 )
 
 print("Filtergraph construido")
@@ -130,15 +140,22 @@ print()
 
 print("3. Preparando renderizado...")
 
-# Asegurar que existan los bucles de lluvia (light/medium/heavy)
+# Asegurar que existan los bucles de lluvia (light/medium/heavy) y hojas
 RAIN_LIGHT = Path("assets/video/rain_light.mp4")
 RAIN_MEDIUM = Path("assets/video/rain_medium.mp4")
 RAIN_HEAVY = Path("assets/video/rain_heavy.mp4")
+LEAVES_LIGHT = Path("assets/video/leaves_light.mp4")
+LEAVES_MEDIUM = Path("assets/video/leaves_medium.mp4")
 if not (RAIN_LIGHT.exists() and RAIN_MEDIUM.exists() and RAIN_HEAVY.exists()):
     print("  No existen bucles de lluvia — generando activos...")
     subprocess.run([".\\venv\\Scripts\\python.exe", "generate_rain_assets.py" ], check=True)
+if not (LEAVES_LIGHT.exists() and LEAVES_MEDIUM.exists()):
+    print("  No existen bucles de hojas — generando activos...")
+    subprocess.run([".\\venv\\Scripts\\python.exe", "generate_leaves_assets.py" ], check=True)
 
-# Usamos los distintos bucles como 3 entradas distintas (se repetirán en bucle)
+# Usamos los distintos bucles como entradas (se repetirán en bucle)
+# Orden de inputs cuando hay música:
+# 0: forest, 1:rain_light, 2:rain_medium, 3:rain_heavy, 4:fog, 5:leaves_light, 6:leaves_medium, 7:audio
 if AUDIO_FILE and AUDIO_FILE.exists():
     # Con música
     cmd = [
@@ -148,10 +165,12 @@ if AUDIO_FILE and AUDIO_FILE.exists():
         "-stream_loop", "-1", "-i", str(RAIN_MEDIUM),  # lluvia media
         "-stream_loop", "-1", "-i", str(RAIN_HEAVY),  # lluvia intensa
         "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=60",  # niebla
+        "-stream_loop", "-1", "-i", str(LEAVES_LIGHT),  # hojas ligera
+        "-stream_loop", "-1", "-i", str(LEAVES_MEDIUM),  # hojas media
         "-i", str(AUDIO_FILE),  # música
         "-filter_complex", filter_complex,
         "-map", "[final]",
-        "-map", "5:a",
+        "-map", "7:a",
         "-c:v", "mpeg4", "-q:v", "5",
         "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
         "-t", "60",
@@ -167,10 +186,12 @@ else:
         "-stream_loop", "-1", "-i", str(RAIN_MEDIUM),  # lluvia media
         "-stream_loop", "-1", "-i", str(RAIN_HEAVY),  # lluvia intensa
         "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=60",  # niebla
+        "-stream_loop", "-1", "-i", str(LEAVES_LIGHT),  # hojas ligera
+        "-stream_loop", "-1", "-i", str(LEAVES_MEDIUM),  # hojas media
         "-f", "lavfi", "-i", "anoisesrc=r=44100:c=2:d=60",  # audio
         "-filter_complex", filter_complex,
         "-map", "[final]",
-        "-map", "5:a",
+        "-map", "7:a",
         "-c:v", "mpeg4", "-q:v", "5",
         "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
         "-t", "60",
