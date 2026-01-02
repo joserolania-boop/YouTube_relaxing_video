@@ -31,21 +31,32 @@ if not AUDIO_FILE.parent.exists():
 
 if not AUDIO_FILE.exists():
     import requests
-    try:
-        # URL de musica ambiental de Pixabay (royalty-free)
-        url = "https://cdn.pixabay.com/download/audio/2022/03/10/audio_0475aeb10b.mp3"
-        print(f"  Descargando desde Pixabay...")
-        response = requests.get(url, timeout=30)
-        if response.status_code == 200:
-            with open(AUDIO_FILE, 'wb') as f:
-                f.write(response.content)
-            size_mb = AUDIO_FILE.stat().st_size / 1024 / 1024
-            print(f"  OK: {AUDIO_FILE.name} ({size_mb:.1f}MB)")
-        else:
-            print(f"  Fallback: generando audio con anoisesrc")
-            AUDIO_FILE = None
-    except Exception as e:
-        print(f"  Error: {e}. Usando anoisesrc.")
+    candidates = [
+        # Pixabay (primary)
+        "https://cdn.pixabay.com/download/audio/2022/03/10/audio_0475aeb10b.mp3",
+        # FreePD example track (fallback)
+        "https://files.freemusicarchive.org/storage-freemusicarchive-org/music/ccCommunity/Various_Artists/Peaceful_Ambience/Various_Artists_-_01_-_Peaceful_Ambience.mp3",
+        # Another Pixabay candidate (older tracks)
+        "https://cdn.pixabay.com/download/audio/2021/10/29/audio_5f0d9d5f7f.mp3",
+    ]
+    downloaded = False
+    for url in candidates:
+        try:
+            print(f"  Intentando descargar: {url.split('/')[-1]}...", end=" ")
+            resp = requests.get(url, timeout=20)
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                with open(AUDIO_FILE, 'wb') as f:
+                    f.write(resp.content)
+                size_mb = AUDIO_FILE.stat().st_size / 1024 / 1024
+                print(f"OK ({size_mb:.1f}MB)")
+                downloaded = True
+                break
+            else:
+                print("falló")
+        except Exception as e:
+            print("error:", e)
+    if not downloaded:
+        print("  No se pudo descargar pista, usando anoisesrc como fallback")
         AUDIO_FILE = None
 
 print()
@@ -84,14 +95,14 @@ for msg, start, end in messages:
 filter_complex = (
     f"[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=rgba,gblur=sigma=1[forest];"
     
-    # Lluvia ligera (rápida, semitransparente)
-    f"[1:v]fps=30,format=rgba,colorchannelmixer=aa=0.50,gblur=sigma=0.3[rain_light];"
+    # Lluvia ligera (rápida, más transparente)
+    f"[1:v]fps=30,format=rgba,colorchannelmixer=aa=0.30,gblur=sigma=0.3[rain_light];"
     
-    # Lluvia media (movimiento, semitransparente)
-    f"[2:v]fps=25,format=rgba,colorchannelmixer=aa=0.35,gblur=sigma=0.6[rain_medium];"
+    # Lluvia media (movimiento, más natural)
+    f"[2:v]fps=25,format=rgba,colorchannelmixer=aa=0.22,gblur=sigma=0.6[rain_medium];"
     
-    # Lluvia intensa (lenta, sutil)
-    f"[3:v]fps=20,format=rgba,colorchannelmixer=aa=0.28,gblur=sigma=1.0[rain_heavy];"
+    # Lluvia intensa (lenta, sutil y transparente)
+    f"[3:v]fps=20,format=rgba,colorchannelmixer=aa=0.15,gblur=sigma=1.0[rain_heavy];"
     
     # Combinar capas de lluvia (screen/overlay mantienen luminancia sin tapar el fondo)
     f"[rain_light][rain_medium]blend=all_mode=screen[rain_blend1];"
@@ -100,9 +111,13 @@ filter_complex = (
     # Agregar lluvia al bosque usando overlay que respeta alpha
     f"[forest][rain_final]overlay=shortest=1:format=auto[with_rain];"
     
+    # Crear capa de 'sway' (suave movimiento horizontal/vertical para simular árboles moviéndose)
+    f"[0:v]format=rgba,gblur=sigma=2,colorchannelmixer=aa=0.06[sway];"
+    f"[with_rain][sway]overlay=x='sin(2*PI*t/12)*6':y='sin(2*PI*t/18)*3':shortest=1:format=auto[with_sway];"
+    
     # Agregar niebla semitransparente (blanca difusa)
     f"[4:v]fps=15,noise=alls=10:allf=t,format=rgba,colorchannelmixer=aa=0.07,gblur=sigma=6[mist];"
-    f"[with_rain][mist]overlay=shortest=1:format=auto[with_mist];"
+    f"[with_sway][mist]overlay=shortest=1:format=auto[with_mist];"
     
     # Agregar mensajes de texto y convertir a yuv420p
     f"[with_mist]{text_filter_chain},format=yuv420p[final]"
