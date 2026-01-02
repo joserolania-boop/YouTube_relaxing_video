@@ -1,0 +1,2 @@
+#!/bin/bash
+ffmpeg -f lavfi -i "color=black:s=1920x1080:d=20:r=30" -vf "geq=r='clip(20 - Y/H*15, 0, 20)':g='clip(30 - Y/H*20, 0, 30)':b='clip(60 - Y/H*40, 0, 60)',noise=alls=5:allf=t+u,blur=1" -c:v libx264 -preset fast -crf 22 assets/video/bg_loop.mp4

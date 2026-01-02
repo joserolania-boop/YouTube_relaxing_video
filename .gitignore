@@ -1,0 +1,10 @@
+# Ignore generated outputs and environment
+out/
+*.mp4
+*.mp3
+*.wav
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
