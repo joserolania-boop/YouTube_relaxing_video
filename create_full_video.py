@@ -34,7 +34,7 @@ if not AUDIO_FILE.exists():
     # Prefer open/royalty-free ambient music (Pixabay) — fallback to one other Pixabay track
     candidates = [
         "https://cdn.pixabay.com/download/audio/2022/03/10/audio_0475aeb10b.mp3",  # calm ambient (Pixabay)
-        "https://cdn.pixabay.com/download/audio/2021/10/29/audio_5f0d9d5f7f.mp3"   # backup (Pixabay)
+        "https://cdn.pixabay.com/download/audio/2020/07/09/audio_37b6f0.mp3",  # alternate calm (Pixabay)
     ]
     downloaded = False
     for url in candidates:
@@ -62,23 +62,26 @@ print()
 print("2. Construyendo filtergraph con lluvia multicapa + mensajes...")
 print()
 
-# Mensajes motivadores (aparecen cada 15 segundos - simplificados)
+# Mensajes / citas famosas sobre la vida (aparecen cada bloque con caja y sombra para integrarse en la escena)
 messages = [
-    ("Respira", 0, 3),
-    ("Paz", 15, 18),
-    ("Presente", 30, 33),
-    ("Cree", 45, 48),
+    ("Ser o no ser; esa es la cuestión. — W. Shakespeare", 2, 6),
+    ("Lo que buscas te está buscando a ti. — Rumi", 8, 12),
+    ("Un viaje de mil millas comienza con un solo paso. — Lao Tzu", 14, 18),
+    ("Si quieres ser feliz, sé. — L. Tolstói", 20, 24),
+    ("La felicidad de tu vida depende de la calidad de tus pensamientos. — Marco Aurelio", 26, 30),
 ]
 
-# Generar filtros de texto (drawtext) - versión simplificada
+# Generar filtros de texto (drawtext) - integrado en el bosque: serif, caja suave y color natural
 text_filter_chain = ""
 for msg, start, end in messages:
     if text_filter_chain:
         text_filter_chain += ","
-    # Escaping simplificado para Windows/FFmpeg
+    # Responsive fontsize and natural color; slide-in from below (0.6s) for a gentle appearance
+    # Note: escape commas in expressions (\,) so ffmpeg doesn't split options
     text_filter_chain += (
-        f"drawtext=fontsize=36:fontcolor=white@0.8:text={msg}:"
-        f"x=(w-text_w)/2:y=h-80:enable='between(t,{start},{end})'"
+        f"drawtext=fontsize='if(gte(w,1280),34,22)':fontcolor=0xDCEEE0@0.95:box=1:boxcolor=black@0.30:boxborderw=6:"
+        f"shadowcolor=0x062814@0.7:shadowx=2:shadowy=2:fontfile=/Windows/Fonts/Georgia.ttf:text='{msg}':"
+        f"x=(w-text_w)/2:y=h-120+40*(1-min(1\,max(0\,((t-{start})/0.6)))):enable='between(t,{start},{end})'"
     )
 
 # Filtergraph completo (corregido para preservar alpha en capas de lluvia y niebla):
@@ -104,9 +107,11 @@ filter_complex = (
     # Combinar capas de lluvia (screen/overlay mantienen luminancia sin tapar el fondo)
     f"[rain_light][rain_medium]blend=all_mode=screen[rain_blend1];"
     f"[rain_blend1][rain_heavy]blend=all_mode=overlay[rain_final];"
+    # Motion-blur temporal en la lluvia para streaks más naturales
+    f"[rain_final]tblend=all_mode=average:all_opacity=0.65[rain_tb];"
     
-    # Agregar lluvia al bosque usando overlay que respeta alpha
-    f"[forest][rain_final]overlay=shortest=1:format=auto[with_rain];"
+    # Agregar lluvia al bosque usando la versión con motion-blur
+    f"[forest][rain_tb]overlay=shortest=1:format=auto[with_rain];"
     
     # Crear capa de 'sway' (suave movimiento horizontal/vertical para simular árboles moviéndose)
     f"[0:v]format=rgba,gblur=sigma=2,colorchannelmixer=aa=0.06[sway];"
@@ -188,18 +193,31 @@ if AUDIO_FILE and AUDIO_FILE.exists():
         return sum(1 for i in range(pos) if cmd[i] == '-i') - 1
 
     audio_filter_ext = ""
+    music_idx = _input_idx(AUDIO_FILE)
+    # Ensure music is audible: apply a slight gain and gentle stereo motion
     if RAIN_SOUND.exists():
-        music_idx = _input_idx(AUDIO_FILE)
         rain_idx = _input_idx(RAIN_SOUND)
+        # Music is more present; rain is filtered (lowpass) and quieter so it remains ambient
         audio_filter_ext = (
-            f"[{music_idx}:a]volume=0.92[music];"
-            f"[{rain_idx}:a]volume=0.20[rain];"
-            f"[music][rain]amix=inputs=2:weights=1 0.25:dropout_transition=2[aout]"
+            f"[{music_idx}:a]volume=1.60,apulsator=hz=0.03[music_p];"
+            f"[{rain_idx}:a]lowpass=f=3000,volume=0.12[rain];"
+            f"[music_p][rain]amix=inputs=2:weights=1 0.12:dropout_transition=2[aout];"
+            f"[aout]volume=1.05[aout2]"
         )
-        audio_map_arg = "[aout]"
+        audio_map_arg = "[aout2]"
     else:
-        music_idx = _input_idx(AUDIO_FILE)
-        audio_map_arg = f"{music_idx}:a"
+        # No rain audio file available: create a synthetic rain-like ambient audio using lavfi
+        noise_lavfi = f"anoisesrc=color=brown:amplitude=0.5:d={DURATION}"
+        cmd += ["-f", "lavfi", "-i", noise_lavfi]
+        noise_idx = _input_idx(noise_lavfi)
+        # Apply lowpass + slight echo to make the noise resemble rain, keep it quieter than music
+        audio_filter_ext = (
+            f"[{music_idx}:a]volume=1.70,apulsator=hz=0.02[music_p];"
+            f"[{noise_idx}:a]lowpass=f=2500,volume=0.22,aecho=0.6:0.5:800:0.45[rain];"
+            f"[music_p][rain]amix=inputs=2:weights=1 0.22:dropout_transition=1[aout];"
+            f"[aout]volume=1.08[aout2]"
+        )
+        audio_map_arg = "[aout2]"
 
     # assemble filter_complex and map args
     filter_complex_full = filter_complex + (";" + audio_filter_ext if audio_filter_ext else "")
