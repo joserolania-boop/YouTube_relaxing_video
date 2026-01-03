@@ -120,7 +120,10 @@ filter_complex = (
     f"[with_sway][mist]overlay=shortest=1:format=auto[with_mist];"
     
     # Agregar mensajes de texto y convertir a yuv420p
-    f"[with_mist]{text_filter_chain},format=yuv420p[final]"
+    # Partículas overlay (bokeh/dust - translúcido y con movimiento)
+    f"[5:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30,format=rgba,colorchannelmixer=aa=0.35,gblur=sigma=0.6,trim=duration={DURATION},setpts=PTS-STARTPTS[particles];"
+    f"[with_mist][particles]overlay=shortest=1:x='sin(2*PI*t/8)*20':y='cos(2*PI*t/12)*10':format=auto[with_particles];"
+    f"[with_particles]{text_filter_chain},format=yuv420p[final]"
 )
 
 print("Filtergraph construido")
@@ -138,45 +141,123 @@ if not (RAIN_LIGHT.exists() and RAIN_MEDIUM.exists() and RAIN_HEAVY.exists()):
     print("  No existen bucles de lluvia — generando activos...")
     subprocess.run([".\\venv\\Scripts\\python.exe", "generate_rain_assets.py" ], check=True)
 
+# Optional ambient rain sound (try to download a royalty-free loop if missing)
+RAIN_SOUND = Path("assets/audio/rain_loop.mp3")
+if not RAIN_SOUND.exists():
+    try:
+        import requests
+        rain_candidates = [
+            # Short royalty-free candidates (fallbacks)
+            "https://cdn.pixabay.com/download/audio/2021/08/04/audio_f3bf3b.mp3",
+            "https://files.freemusicarchive.org/storage-freemusicarchive-org/music/noise/Rain_loop.mp3"
+        ]
+        downloaded = False
+        for url in rain_candidates:
+            try:
+                resp = requests.get(url, timeout=20)
+                if resp.status_code == 200 and len(resp.content) > 1000:
+                    RAIN_SOUND.parent.mkdir(parents=True, exist_ok=True)
+                    with open(RAIN_SOUND, 'wb') as f:
+                        f.write(resp.content)
+                    print(f"  Rain sound downloaded: {RAIN_SOUND.name}")
+                    downloaded = True
+                    break
+            except Exception:
+                continue
+        if not downloaded:
+            print("  No rain loop found automatically; continuing without ambient rain audio")
+    except Exception:
+        print("  requests unavailable, skipping rain download (no rain audio)")
+
 # Usamos los distintos bucles como 3 entradas distintas (se repetirán en bucle)
+PARTICLES = Path("assets/video/particles.webm")
+if not PARTICLES.exists():
+    print("  No existe bucle de partículas — generando assets de partículas (sin hojas)...")
+    subprocess.run([".\venv\Scripts\python.exe", "generate_particles.py", "--no-leaves" ], check=True)
+
+# Build ffmpeg inputs dynamically (allows optional rain-sound insertion and audio mixing)
 if AUDIO_FILE and AUDIO_FILE.exists():
-    # Con música
-    cmd = [
-        FFMPEG,
-        "-loop", "1", "-i", str(FOREST),
-        "-stream_loop", "-1", "-i", str(RAIN_LIGHT),  # lluvia ligera
-        "-stream_loop", "-1", "-i", str(RAIN_MEDIUM),  # lluvia media
-        "-stream_loop", "-1", "-i", str(RAIN_HEAVY),  # lluvia intensa
-        "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=60",  # niebla
-        "-i", str(AUDIO_FILE),  # música
-        "-filter_complex", filter_complex,
-        "-map", "[final]",
-        "-map", "5:a",
-        "-c:v", "mpeg4", "-q:v", "5",
-        "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
-        "-t", "60",
-        "-r", "30",
-        "-y", str(OUTPUT)
-    ]
+    # Con música (build inputs stepwise)
+    cmd = [FFMPEG, "-loop", "1", "-i", str(FOREST)]
+    cmd += ["-stream_loop", "-1", "-i", str(RAIN_LIGHT),  # lluvia ligera
+            "-stream_loop", "-1", "-i", str(RAIN_MEDIUM),  # lluvia media
+            "-stream_loop", "-1", "-i", str(RAIN_HEAVY),  # lluvia intensa
+            "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=" + str(DURATION),  # niebla
+            "-stream_loop", "-1", "-i", str(PARTICLES)]  # partículas
+
+    # Optional ambient rain sound
+    if RAIN_SOUND.exists():
+        cmd += ["-stream_loop", "-1", "-i", str(RAIN_SOUND)]  # ambient rain sound
+
+    # Music input
+    cmd += ["-i", str(AUDIO_FILE)]  # música
+
+    # determine indices for audio inputs and build audio mixing filter if needed
+    def _input_idx(path):
+        # returns the ffmpeg input index for the given path found in the cmd list
+        pos = cmd.index(str(path))
+        return sum(1 for i in range(pos) if cmd[i] == '-i') - 1
+
+    audio_filter_ext = ""
+    if RAIN_SOUND.exists():
+        music_idx = _input_idx(AUDIO_FILE)
+        rain_idx = _input_idx(RAIN_SOUND)
+        audio_filter_ext = (
+            f"[{music_idx}:a]volume=0.92[music];"
+            f"[{rain_idx}:a]volume=0.20[rain];"
+            f"[music][rain]amix=inputs=2:weights=1 0.25:dropout_transition=2[aout]"
+        )
+        audio_map_arg = "[aout]"
+    else:
+        music_idx = _input_idx(AUDIO_FILE)
+        audio_map_arg = f"{music_idx}:a"
+
+    # assemble filter_complex and map args
+    filter_complex_full = filter_complex + (";" + audio_filter_ext if audio_filter_ext else "")
+    cmd += ["-filter_complex", filter_complex_full, "-map", "[final]", "-map", audio_map_arg,
+            "-c:v", "mpeg4", "-q:v", "5",
+            "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
+            "-t", str(DURATION), "-r", "30", "-y", str(OUTPUT)]
 else:
-    # Con ruido rosa
-    cmd = [
-        FFMPEG,
-        "-loop", "1", "-i", str(FOREST),
-        "-stream_loop", "-1", "-i", str(RAIN_LIGHT),  # lluvia ligera
-        "-stream_loop", "-1", "-i", str(RAIN_MEDIUM),  # lluvia media
-        "-stream_loop", "-1", "-i", str(RAIN_HEAVY),  # lluvia intensa
-        "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=60",  # niebla
-        "-f", "lavfi", "-i", "anoisesrc=r=44100:c=2:d=60",  # audio
-        "-filter_complex", filter_complex,
-        "-map", "[final]",
-        "-map", "5:a",
-        "-c:v", "mpeg4", "-q:v", "5",
-        "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
-        "-t", "60",
-        "-r", "30",
-        "-y", str(OUTPUT)
-    ]
+    # No music: use pink noise or ambient rain sound if available
+    cmd = [FFMPEG, "-loop", "1", "-i", str(FOREST)]
+    cmd += ["-stream_loop", "-1", "-i", str(RAIN_LIGHT),
+            "-stream_loop", "-1", "-i", str(RAIN_MEDIUM),
+            "-stream_loop", "-1", "-i", str(RAIN_HEAVY),
+            "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=" + str(DURATION),
+            "-stream_loop", "-1", "-i", str(PARTICLES)]
+
+    if RAIN_SOUND.exists():
+        cmd += ["-stream_loop", "-1", "-i", str(RAIN_SOUND)]
+        # pink noise input comes after rain sound so its index shifts
+        cmd += ["-f", "lavfi", "-i", "anoisesrc=r=44100:c=2:d=" + str(DURATION)]
+        # compute indices
+        def _input_idx(path):
+            pos = cmd.index(str(path))
+            return sum(1 for i in range(pos) if cmd[i] == '-i') - 1
+        rain_idx = _input_idx(RAIN_SOUND)
+        noise_idx = _input_idx("anoisesrc=r=44100:c=2:d=" + str(DURATION))
+        audio_filter_ext = (
+            f"[{rain_idx}:a]volume=0.30[rain];"
+            f"[{noise_idx}:a]volume=0.80[noise];"
+            f"[noise][rain]amix=inputs=2:weights=1 0.6:dropout_transition=2[aout]"
+        )
+        filter_complex_full = filter_complex + ";" + audio_filter_ext
+        audio_map_arg = "[aout]"
+    else:
+        # only noise
+        cmd += ["-f", "lavfi", "-i", "anoisesrc=r=44100:c=2:d=" + str(DURATION)]
+        # noise input is last; compute its input index
+        def _input_idx_simple():
+            return sum(1 for i in range(len(cmd)) if cmd[i] == '-i') - 1
+        noise_idx = _input_idx_simple()
+        audio_map_arg = f"{noise_idx}:a"
+        filter_complex_full = filter_complex
+
+    cmd += ["-filter_complex", filter_complex_full, "-map", "[final]", "-map", audio_map_arg,
+            "-c:v", "mpeg4", "-q:v", "5",
+            "-c:a", "aac", "-ar", "44100", "-b:a", "192k",
+            "-t", str(DURATION), "-r", "30", "-y", str(OUTPUT)]
 
 print()
 print("4. Ejecutando FFmpeg...")
@@ -193,7 +274,7 @@ try:
         print("=" * 70)
         print(f"Archivo: {OUTPUT.name}")
         print(f"Tamaño: {size_mb:.1f} MB")
-        print(f"Duración: 60 segundos")
+        print(f"Duración: {DURATION} segundos")
         print(f"Resolución: 1280x720@30fps")
         print()
         print("Características incluidas:")
