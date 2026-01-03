@@ -197,12 +197,12 @@ if AUDIO_FILE and AUDIO_FILE.exists():
     # Ensure music is audible: apply a slight gain and gentle stereo motion
     if RAIN_SOUND.exists():
         rain_idx = _input_idx(RAIN_SOUND)
-        # Music is more present; rain is filtered (lowpass) and quieter so it remains ambient
+        # Music normalized and amplified; rain lowpassed and quieter to let the music stand out
         audio_filter_ext = (
-            f"[{music_idx}:a]volume=1.60,apulsator=hz=0.03[music_p];"
-            f"[{rain_idx}:a]lowpass=f=3000,volume=0.12[rain];"
-            f"[music_p][rain]amix=inputs=2:weights=1 0.12:dropout_transition=2[aout];"
-            f"[aout]volume=1.05[aout2]"
+            f"[{music_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=7,volume=2.2,apulsator=hz=0.02[music_p];"
+            f"[{rain_idx}:a]lowpass=f=2200,volume=0.10[rain];"
+            f"[music_p][rain]amix=inputs=2:weights=1 0.10:dropout_transition=2[aout];"
+            f"[aout]dynaudnorm=f=150:g=15[aout2]"
         )
         audio_map_arg = "[aout2]"
     else:
@@ -212,10 +212,10 @@ if AUDIO_FILE and AUDIO_FILE.exists():
         noise_idx = _input_idx(noise_lavfi)
         # Apply lowpass + slight echo to make the noise resemble rain, keep it quieter than music
         audio_filter_ext = (
-            f"[{music_idx}:a]volume=1.70,apulsator=hz=0.02[music_p];"
-            f"[{noise_idx}:a]lowpass=f=2500,volume=0.22,aecho=0.6:0.5:800:0.45[rain];"
-            f"[music_p][rain]amix=inputs=2:weights=1 0.22:dropout_transition=1[aout];"
-            f"[aout]volume=1.08[aout2]"
+            f"[{music_idx}:a]loudnorm=I=-14:TP=-1.5:LRA=7,volume=2.5,apulsator=hz=0.02[music_p];"
+            f"[{noise_idx}:a]lowpass=f=2000,volume=0.16,aecho=0.5:0.4:700:0.4[rain];"
+            f"[music_p][rain]amix=inputs=2:weights=1 0.16:dropout_transition=1[aout];"
+            f"[aout]dynaudnorm=f=150:g=15[aout2]"
         )
         audio_map_arg = "[aout2]"
 
