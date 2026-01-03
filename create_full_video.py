@@ -12,7 +12,7 @@ FFMPEG = r"C:\Users\Admin\AppData\Local\Microsoft\WinGet\Packages\BtbN.FFmpeg.LG
 FOREST = Path("./assets/video/bosque_brumoso.jpg")
 OUTPUT = Path("./out/bosque_completo_final.mp4")
 AUDIO_FILE = Path("./assets/audio/ambient_music.mp3")
-DURATION = 60
+DURATION = 30
 FPS = 30
 
 # Crear directorio
@@ -31,13 +31,10 @@ if not AUDIO_FILE.parent.exists():
 
 if not AUDIO_FILE.exists():
     import requests
+    # Prefer open/royalty-free ambient music (Pixabay) — fallback to one other Pixabay track
     candidates = [
-        # Pixabay (primary)
-        "https://cdn.pixabay.com/download/audio/2022/03/10/audio_0475aeb10b.mp3",
-        # FreePD example track (fallback)
-        "https://files.freemusicarchive.org/storage-freemusicarchive-org/music/ccCommunity/Various_Artists/Peaceful_Ambience/Various_Artists_-_01_-_Peaceful_Ambience.mp3",
-        # Another Pixabay candidate (older tracks)
-        "https://cdn.pixabay.com/download/audio/2021/10/29/audio_5f0d9d5f7f.mp3",
+        "https://cdn.pixabay.com/download/audio/2022/03/10/audio_0475aeb10b.mp3",  # calm ambient (Pixabay)
+        "https://cdn.pixabay.com/download/audio/2021/10/29/audio_5f0d9d5f7f.mp3"   # backup (Pixabay)
     ]
     downloaded = False
     for url in candidates:
@@ -120,10 +117,7 @@ filter_complex = (
     f"[with_sway][mist]overlay=shortest=1:format=auto[with_mist];"
     
     # Agregar mensajes de texto y convertir a yuv420p
-    # Partículas overlay (bokeh/dust - translúcido y con movimiento)
-    f"[5:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30,format=rgba,colorchannelmixer=aa=0.35,gblur=sigma=0.6,trim=duration={DURATION},setpts=PTS-STARTPTS[particles];"
-    f"[with_mist][particles]overlay=shortest=1:x='sin(2*PI*t/8)*20':y='cos(2*PI*t/12)*10':format=auto[with_particles];"
-    f"[with_particles]{text_filter_chain},format=yuv420p[final]"
+    f"[with_mist]{text_filter_chain},format=yuv420p[final]"
 )
 
 print("Filtergraph construido")
@@ -169,21 +163,16 @@ if not RAIN_SOUND.exists():
     except Exception:
         print("  requests unavailable, skipping rain download (no rain audio)")
 
-# Usamos los distintos bucles como 3 entradas distintas (se repetirán en bucle)
-PARTICLES = Path("assets/video/particles.webm")
-if not PARTICLES.exists():
-    print("  No existe bucle de partículas — generando assets de partículas (sin hojas)...")
-    subprocess.run([".\venv\Scripts\python.exe", "generate_particles.py", "--no-leaves" ], check=True)
-
-# Build ffmpeg inputs dynamically (allows optional rain-sound insertion and audio mixing)
+# Build ffmpeg inputs dynamically (rain layers only — particles disabled)
+# (Particles were removed per request)
+# We keep the generator script for future use but do not call it here.
 if AUDIO_FILE and AUDIO_FILE.exists():
     # Con música (build inputs stepwise)
-    cmd = [FFMPEG, "-loop", "1", "-i", str(FOREST)]
+    cmd = [FFMPEG, "-nostdin", "-loop", "1", "-i", str(FOREST)]
     cmd += ["-stream_loop", "-1", "-i", str(RAIN_LIGHT),  # lluvia ligera
             "-stream_loop", "-1", "-i", str(RAIN_MEDIUM),  # lluvia media
             "-stream_loop", "-1", "-i", str(RAIN_HEAVY),  # lluvia intensa
-            "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=" + str(DURATION),  # niebla
-            "-stream_loop", "-1", "-i", str(PARTICLES)]  # partículas
+            "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=" + str(DURATION)]  # niebla
 
     # Optional ambient rain sound
     if RAIN_SOUND.exists():
@@ -220,12 +209,11 @@ if AUDIO_FILE and AUDIO_FILE.exists():
             "-t", str(DURATION), "-r", "30", "-y", str(OUTPUT)]
 else:
     # No music: use pink noise or ambient rain sound if available
-    cmd = [FFMPEG, "-loop", "1", "-i", str(FOREST)]
+    cmd = [FFMPEG, "-nostdin", "-loop", "1", "-i", str(FOREST)]
     cmd += ["-stream_loop", "-1", "-i", str(RAIN_LIGHT),
             "-stream_loop", "-1", "-i", str(RAIN_MEDIUM),
             "-stream_loop", "-1", "-i", str(RAIN_HEAVY),
-            "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=" + str(DURATION),
-            "-stream_loop", "-1", "-i", str(PARTICLES)]
+            "-f", "lavfi", "-i", "color=0xffffff:s=1280x720:d=" + str(DURATION)]  # particles removed intentionally
 
     if RAIN_SOUND.exists():
         cmd += ["-stream_loop", "-1", "-i", str(RAIN_SOUND)]
