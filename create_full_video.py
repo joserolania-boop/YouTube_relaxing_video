@@ -66,6 +66,82 @@ if not AUDIO_FILE.exists():
         elif alt_generated.exists():
             print(f"  Usando pista sintetizada: {alt_generated.name}")
             AUDIO_FILE = alt_generated
+        else:
+            # Scan user-provided audio files and pick the best by loudness (closest to target)
+            print("  Buscando pistas en assets/audio para elegir la mejor melodía...")
+            candidates = []
+            for ext in ('*.mp3', '*.wav', '*.m4a', '*.aac'):
+                candidates.extend(sorted(Path('assets/audio').glob(ext)))
+            best = None
+            best_score = 1e9
+            target = -6.0  # preferred mean volume
+            for c in candidates:
+                # skip the fallback/noise files
+                if c.name.startswith('ambient_music') or c.name.startswith('diagnostic'):
+                    continue
+                try:
+                    p = subprocess.run([FFMPEG, '-i', str(c), '-af', 'volumedetect', '-f', 'null', '-'], capture_output=True, text=True, timeout=20)
+                    stderr = p.stderr or ''
+                    mv = None
+                    for line in stderr.splitlines():
+                        if 'mean_volume' in line:
+                            try:
+                                mv = float(line.split(':')[-1].strip().split()[0])
+                            except Exception:
+                                mv = None
+                            break
+                    if mv is None:
+                        continue
+                    # ignore extremely quiet files (likely silence or very low gain)
+                    if mv < -35:
+                        continue
+                    score = abs(mv - target)
+                    if score < best_score:
+                        best_score = score
+                        best = (c, mv)
+                except Exception:
+                    continue
+            if best:
+                AUDIO_FILE = best[0]
+                print(f"  Seleccionada: {AUDIO_FILE.name} (mean={best[1]:.1f} dB)")
+            else:
+                print("  No se encontró pista adecuada; se usará el fallback (ruido coloreado)")
+
+    # Prefer explicit user-added relaxing melodies (relax/meditation/flute/piano) over generic ambient_music
+    user_patterns = ('*relax*', '*meditat*', '*flute*', '*piano*', '*calm*', '*please*')
+    user_candidates = []
+    for pat in user_patterns:
+        user_candidates.extend(sorted(Path('assets/audio').glob(pat)))
+    if user_candidates:
+        print('  Se detectaron melodías nuevas en assets/audio, evaluando para elegir la mejor...')
+        best = None
+        best_score = 1e9
+        target = -6.0
+        for c in user_candidates:
+            try:
+                p = subprocess.run([FFMPEG, '-i', str(c), '-af', 'volumedetect', '-f', 'null', '-'], capture_output=True, text=True, timeout=20)
+                stderr = p.stderr or ''
+                mv = None
+                for line in stderr.splitlines():
+                    if 'mean_volume' in line:
+                        try:
+                            mv = float(line.split(':')[-1].strip().split()[0])
+                        except Exception:
+                            mv = None
+                        break
+                if mv is None or mv < -35:
+                    continue
+                score = abs(mv - target)
+                if score < best_score:
+                    best_score = score
+                    best = (c, mv)
+            except Exception:
+                continue
+        if best:
+            AUDIO_FILE = best[0]
+            print(f"  Elegida pista de usuario: {AUDIO_FILE.name} (mean={best[1]:.1f} dB)")
+        else:
+            print('  Ninguna de las melodías nuevas resultó adecuada; manteniendo la pista actual')
 
 print()
 
@@ -208,11 +284,11 @@ if AUDIO_FILE and AUDIO_FILE.exists():
     # Ensure music is audible: apply a slight gain and gentle stereo motion
     if RAIN_SOUND.exists():
         rain_idx = _input_idx(RAIN_SOUND)
-        # Music louder and normalized; rain much quieter and softer so music is clearly primary
+        # Music louder and normalized; increase and shape rain so it's audible but not overpowering
         audio_filter_ext = (
             f"[{music_idx}:a]loudnorm=I=-8:TP=-1.0:LRA=7,volume=1.0[music_p];"
-            f"[{rain_idx}:a]lowpass=f=1600,volume=0.03[rain];"
-            f"[music_p][rain]amix=inputs=2:weights=1 0.03:dropout_transition=2[aout];"
+            f"[{rain_idx}:a]highpass=f=150,lowpass=f=3500,volume=0.18[rain];"
+            f"[music_p][rain]amix=inputs=2:weights=1 0.18:dropout_transition=2[aout];"
             f"[aout]dynaudnorm=f=150:g=12[aout2]"
         )
         audio_map_arg = "[aout2]"
@@ -221,11 +297,11 @@ if AUDIO_FILE and AUDIO_FILE.exists():
         noise_lavfi = f"anoisesrc=color=brown:amplitude=0.5:d={DURATION}"
         cmd += ["-f", "lavfi", "-i", noise_lavfi]
         noise_idx = _input_idx(noise_lavfi)
-        # Apply lowpass + slight echo to make the noise resemble rain, keep it quieter than music
+        # Apply shaping so synthetic noise sounds like rain and is more audible in the mix
         audio_filter_ext = (
             f"[{music_idx}:a]loudnorm=I=-8:TP=-1.0:LRA=7,volume=1.0[music_p];"
-            f"[{noise_idx}:a]lowpass=f=1600,volume=0.03,aecho=0.5:0.3:600:0.35[rain];"
-            f"[music_p][rain]amix=inputs=2:weights=1 0.03:dropout_transition=1[aout];"
+            f"[{noise_idx}:a]highpass=f=200,lowpass=f=4000,volume=0.15,aecho=0.5:0.25:200:0.2[rain];"
+            f"[music_p][rain]amix=inputs=2:weights=1 0.15:dropout_transition=1[aout];"
             f"[aout]dynaudnorm=f=150:g=12[aout2]"
         )
         audio_map_arg = "[aout2]"
