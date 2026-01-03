@@ -182,20 +182,20 @@ for msg, start, end in messages:
 filter_complex = (
     f"[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=rgba,gblur=sigma=1[forest];"
     
-    # Lluvia ligera (rápida, más transparente)
-    f"[1:v]fps=30,format=rgba,colorchannelmixer=aa=0.30,gblur=sigma=0.3[rain_light];"
+    # Lluvia ligera (rápida, menos blanca, tono gris-azulado)
+    f"[1:v]fps=30,format=rgba,colorchannelmixer=aa=0.40,hue=s=0.6,eq=brightness=-0.06:contrast=0.95,gblur=sigma=0.10[rain_light];"
     
-    # Lluvia media (movimiento, más natural)
-    f"[2:v]fps=25,format=rgba,colorchannelmixer=aa=0.22,gblur=sigma=0.6[rain_medium];"
+    # Lluvia media (movimiento, tono neutro y menos brillante)
+    f"[2:v]fps=25,format=rgba,colorchannelmixer=aa=0.32,hue=s=0.65,eq=brightness=-0.05:contrast=0.96,gblur=sigma=0.30[rain_medium];"
     
-    # Lluvia intensa (lenta, sutil y transparente)
-    f"[3:v]fps=20,format=rgba,colorchannelmixer=aa=0.15,gblur=sigma=1.0[rain_heavy];"
+    # Lluvia intensa (lenta, más presente, menos saturada)
+    f"[3:v]fps=20,format=rgba,colorchannelmixer=aa=0.22,hue=s=0.7,eq=brightness=-0.04:contrast=0.98,gblur=sigma=0.60[rain_heavy];"
     
-    # Combinar capas de lluvia (screen/overlay mantienen luminancia sin tapar el fondo)
+    # Combinar capas de lluvia con mezcla más natural (softlight) y opacidad moderada
     f"[rain_light][rain_medium]blend=all_mode=screen[rain_blend1];"
-    f"[rain_blend1][rain_heavy]blend=all_mode=overlay[rain_final];"
-    # Motion-blur temporal en la lluvia para streaks más naturales
-    f"[rain_final]tblend=all_mode=average:all_opacity=0.65[rain_tb];"
+    f"[rain_blend1][rain_heavy]blend=all_mode=softlight:all_opacity=0.7[rain_final];"
+    # Motion-blur temporal en la lluvia para streaks más naturales (opacidad moderada)
+    f"[rain_final]tblend=all_mode=average:all_opacity=0.7[rain_tb];"
     
     # Agregar lluvia al bosque usando la versión con motion-blur
     f"[forest][rain_tb]overlay=shortest=1:format=auto[with_rain];"
@@ -205,7 +205,7 @@ filter_complex = (
     f"[with_rain][sway]overlay=x='sin(2*PI*t/12)*6':y='sin(2*PI*t/18)*3':shortest=1:format=auto[with_sway];"
     
     # Agregar niebla semitransparente (blanca difusa)
-    f"[4:v]fps=15,noise=alls=10:allf=t,format=rgba,colorchannelmixer=aa=0.07,gblur=sigma=6[mist];"
+    f"[4:v]fps=15,noise=alls=10:allf=t,format=rgba,colorchannelmixer=aa=0.05,hue=s=0.8,eq=brightness=-0.04,gblur=sigma=6[mist];"
     f"[with_sway][mist]overlay=shortest=1:format=auto[with_mist];"
     
     # Agregar mensajes de texto y convertir a yuv420p
@@ -284,11 +284,11 @@ if AUDIO_FILE and AUDIO_FILE.exists():
     # Ensure music is audible: apply a slight gain and gentle stereo motion
     if RAIN_SOUND.exists():
         rain_idx = _input_idx(RAIN_SOUND)
-        # Music louder and normalized; increase and shape rain so it's audible but not overpowering
+        # Music louder and normalized; increase and shape rain so it's audibly present but not overpowering
         audio_filter_ext = (
             f"[{music_idx}:a]loudnorm=I=-8:TP=-1.0:LRA=7,volume=1.0[music_p];"
-            f"[{rain_idx}:a]highpass=f=150,lowpass=f=3500,volume=0.18[rain];"
-            f"[music_p][rain]amix=inputs=2:weights=1 0.18:dropout_transition=2[aout];"
+            f"[{rain_idx}:a]highpass=f=120,lowpass=f=5000,volume=0.30[rain];"
+            f"[music_p][rain]amix=inputs=2:weights=1 0.30:dropout_transition=2[aout];"
             f"[aout]dynaudnorm=f=150:g=12[aout2]"
         )
         audio_map_arg = "[aout2]"
@@ -300,8 +300,8 @@ if AUDIO_FILE and AUDIO_FILE.exists():
         # Apply shaping so synthetic noise sounds like rain and is more audible in the mix
         audio_filter_ext = (
             f"[{music_idx}:a]loudnorm=I=-8:TP=-1.0:LRA=7,volume=1.0[music_p];"
-            f"[{noise_idx}:a]highpass=f=200,lowpass=f=4000,volume=0.15,aecho=0.5:0.25:200:0.2[rain];"
-            f"[music_p][rain]amix=inputs=2:weights=1 0.15:dropout_transition=1[aout];"
+            f"[{noise_idx}:a]highpass=f=150,lowpass=f=5000,volume=0.28,aecho=0.5:0.25:180:0.22[rain];"
+            f"[music_p][rain]amix=inputs=2:weights=1 0.28:dropout_transition=1[aout];"
             f"[aout]dynaudnorm=f=150:g=12[aout2]"
         )
         audio_map_arg = "[aout2]"
