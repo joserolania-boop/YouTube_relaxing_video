@@ -56,6 +56,17 @@ if not AUDIO_FILE.exists():
         print("  No se pudo descargar pista, usando anoisesrc como fallback")
         AUDIO_FILE = None
 
+    # Fallback: prefer already-generated or processed ambient tracks if present
+    alt_processed = Path("assets/audio/ambient_music_processed.mp3")
+    alt_generated = Path("assets/audio/ambient_music_generated.mp3")
+    if (AUDIO_FILE is None) or (not AUDIO_FILE.exists()):
+        if alt_processed.exists():
+            print(f"  Usando pista procesada: {alt_processed.name}")
+            AUDIO_FILE = alt_processed
+        elif alt_generated.exists():
+            print(f"  Usando pista sintetizada: {alt_generated.name}")
+            AUDIO_FILE = alt_generated
+
 print()
 
 # ===== 2. CONSTRUIR FILTERGRAPH =====
@@ -199,7 +210,7 @@ if AUDIO_FILE and AUDIO_FILE.exists():
         rain_idx = _input_idx(RAIN_SOUND)
         # Music louder and normalized; rain much quieter and softer so music is clearly primary
         audio_filter_ext = (
-            f"[{music_idx}:a]loudnorm=I=-8:TP=-1.0:LRA=7,volume=4.0[music_p];"
+            f"[{music_idx}:a]loudnorm=I=-8:TP=-1.0:LRA=7,volume=1.0[music_p];"
             f"[{rain_idx}:a]lowpass=f=1600,volume=0.03[rain];"
             f"[music_p][rain]amix=inputs=2:weights=1 0.03:dropout_transition=2[aout];"
             f"[aout]dynaudnorm=f=150:g=12[aout2]"
@@ -212,7 +223,7 @@ if AUDIO_FILE and AUDIO_FILE.exists():
         noise_idx = _input_idx(noise_lavfi)
         # Apply lowpass + slight echo to make the noise resemble rain, keep it quieter than music
         audio_filter_ext = (
-            f"[{music_idx}:a]loudnorm=I=-8:TP=-1.0:LRA=7,volume=4.2[music_p];"
+            f"[{music_idx}:a]loudnorm=I=-8:TP=-1.0:LRA=7,volume=1.0[music_p];"
             f"[{noise_idx}:a]lowpass=f=1600,volume=0.03,aecho=0.5:0.3:600:0.35[rain];"
             f"[music_p][rain]amix=inputs=2:weights=1 0.03:dropout_transition=1[aout];"
             f"[aout]dynaudnorm=f=150:g=12[aout2]"
@@ -235,30 +246,37 @@ else:
 
     if RAIN_SOUND.exists():
         cmd += ["-stream_loop", "-1", "-i", str(RAIN_SOUND)]
-        # pink noise input comes after rain sound so its index shifts
-        cmd += ["-f", "lavfi", "-i", "anoisesrc=r=44100:c=2:d=" + str(DURATION)]
+        # Add a gentle colored noise (brown) to fill gaps and add texture — shaped to sound like rain
+        noise_lavfi = f"anoisesrc=color=brown:amplitude=0.35:d={DURATION}"
+        cmd += ["-f", "lavfi", "-i", noise_lavfi]
         # compute indices
         def _input_idx(path):
             pos = cmd.index(str(path))
             return sum(1 for i in range(pos) if cmd[i] == '-i') - 1
         rain_idx = _input_idx(RAIN_SOUND)
-        noise_idx = _input_idx("anoisesrc=r=44100:c=2:d=" + str(DURATION))
+        noise_idx = _input_idx(noise_lavfi)
         audio_filter_ext = (
-            f"[{rain_idx}:a]volume=0.30[rain];"
-            f"[{noise_idx}:a]volume=0.80[noise];"
-            f"[noise][rain]amix=inputs=2:weights=1 0.6:dropout_transition=2[aout]"
+            f"[{rain_idx}:a]lowpass=f=2500,volume=0.60[rain];"
+            f"[{noise_idx}:a]highpass=f=200,lowpass=f=4000,volume=0.25[noise];"
+            f"[noise][rain]amix=inputs=2:weights=0.6 1:dropout_transition=2[aout];"
+            f"[aout]dynaudnorm=f=150:g=12[aout2]"
         )
         filter_complex_full = filter_complex + ";" + audio_filter_ext
-        audio_map_arg = "[aout]"
+        audio_map_arg = "[aout2]"
     else:
-        # only noise
-        cmd += ["-f", "lavfi", "-i", "anoisesrc=r=44100:c=2:d=" + str(DURATION)]
+        # only noise: generate brown noise and shape it to resemble rain (less harsh than white noise)
+        noise_lavfi = f"anoisesrc=color=brown:amplitude=0.35:d={DURATION}"
+        cmd += ["-f", "lavfi", "-i", noise_lavfi]
         # noise input is last; compute its input index
         def _input_idx_simple():
             return sum(1 for i in range(len(cmd)) if cmd[i] == '-i') - 1
         noise_idx = _input_idx_simple()
-        audio_map_arg = f"{noise_idx}:a"
-        filter_complex_full = filter_complex
+        audio_filter_ext = (
+            f"[{noise_idx}:a]highpass=f=200,lowpass=f=4000,volume=0.45[rain];"
+            f"[rain]dynaudnorm=f=150:g=12[aout]"
+        )
+        filter_complex_full = filter_complex + ";" + audio_filter_ext
+        audio_map_arg = "[aout]"
 
     cmd += ["-filter_complex", filter_complex_full, "-map", "[final]", "-map", audio_map_arg,
             "-c:v", "mpeg4", "-q:v", "5",
