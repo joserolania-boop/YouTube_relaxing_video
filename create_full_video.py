@@ -183,29 +183,29 @@ filter_complex = (
     f"[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,format=rgba,gblur=sigma=1[forest];"
     
     # Lluvia ligera (rápida, menos blanca, tono gris-azulado)
-    f"[1:v]fps=30,format=rgba,colorchannelmixer=aa=0.40,hue=s=0.6,eq=brightness=-0.06:contrast=0.95,gblur=sigma=0.10[rain_light];"
+    f"[1:v]fps=30,format=rgba,colorchannelmixer=aa=0.25,gblur=sigma=0.10[rain_light];"
     
     # Lluvia media (movimiento, tono neutro y menos brillante)
-    f"[2:v]fps=25,format=rgba,colorchannelmixer=aa=0.32,hue=s=0.65,eq=brightness=-0.05:contrast=0.96,gblur=sigma=0.30[rain_medium];"
+    f"[2:v]fps=25,format=rgba,colorchannelmixer=aa=0.20,gblur=sigma=0.30[rain_medium];"
     
     # Lluvia intensa (lenta, más presente, menos saturada)
-    f"[3:v]fps=20,format=rgba,colorchannelmixer=aa=0.22,hue=s=0.7,eq=brightness=-0.04:contrast=0.98,gblur=sigma=0.60[rain_heavy];"
+    f"[3:v]fps=20,format=rgba,colorchannelmixer=aa=0.15,gblur=sigma=0.60[rain_heavy];"
     
     # Combinar capas de lluvia con mezcla más natural (softlight) y opacidad moderada
-    f"[rain_light][rain_medium]blend=all_mode=screen[rain_blend1];"
-    f"[rain_blend1][rain_heavy]blend=all_mode=softlight:all_opacity=0.7[rain_final];"
+    f"[rain_light][rain_medium]blend=all_mode=softlight[rain_blend1];"
+    f"[rain_blend1][rain_heavy]blend=all_mode=softlight:all_opacity=0.5[rain_final];"
     # Motion-blur temporal en la lluvia para streaks más naturales (opacidad moderada)
-    f"[rain_final]tblend=all_mode=average:all_opacity=0.7[rain_tb];"
+    f"[rain_final]tblend=all_mode=average:all_opacity=0.5[rain_tb];"
     
     # Agregar lluvia al bosque usando la versión con motion-blur
-    f"[forest][rain_tb]overlay=shortest=1:format=auto[with_rain];"
+    f"[forest][rain_tb]blend=all_mode=softlight:all_opacity=0.6[with_rain];"
     
     # Crear capa de 'sway' (suave movimiento horizontal/vertical para simular árboles moviéndose)
     f"[0:v]format=rgba,gblur=sigma=2,colorchannelmixer=aa=0.06[sway];"
     f"[with_rain][sway]overlay=x='sin(2*PI*t/12)*6':y='sin(2*PI*t/18)*3':shortest=1:format=auto[with_sway];"
     
     # Agregar niebla semitransparente (blanca difusa)
-    f"[4:v]fps=15,noise=alls=10:allf=t,format=rgba,colorchannelmixer=aa=0.05,hue=s=0.8,eq=brightness=-0.04,gblur=sigma=6[mist];"
+    f"[4:v]fps=15,noise=alls=10:allf=t,format=rgba,colorchannelmixer=aa=0.05,hue=s=0.8,gblur=sigma=6[mist];"
     f"[with_sway][mist]overlay=shortest=1:format=auto[with_mist];"
     
     # Agregar mensajes de texto y convertir a yuv420p
